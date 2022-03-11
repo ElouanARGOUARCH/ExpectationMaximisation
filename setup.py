@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='ExpectationMaximisation',
     version='',
-    packages=['models'],
+    packages=['models_em'],
     url='',
     license='',
     install_requires = ['torch', 'tqdm', 'seaborn'],
