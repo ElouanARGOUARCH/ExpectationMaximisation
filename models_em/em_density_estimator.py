@@ -17,9 +17,6 @@ class EMDensityEstimator(nn.Module):
         self.target_samples = target_samples
         self.p = self.target_samples.shape[-1]
         self.K = K
-
-        self.reference = MultivariateNormal(torch.zeros(self.p), torch.eye(self.p))
-
         self.log_pi= torch.log(torch.ones([self.K])/self.K)
         self.m = self.target_samples[torch.randint(low= 0, high = self.target_samples.shape[0],size = [self.K])]
         self.log_s = torch.zeros(self.K,self.p)
@@ -43,7 +40,7 @@ class EMDensityEstimator(nn.Module):
 
     def compute_log_v(self,x):
         z = self.forward(x)
-        unormalized_log_v = self.reference.log_prob(z) + self.log_pi.unsqueeze(0).repeat(x.shape[0],1)+ self.log_det_J(x)
+        unormalized_log_v = self.reference_log_density(z) + self.log_pi.unsqueeze(0).repeat(x.shape[0],1)+ self.log_det_J(x)
         return unormalized_log_v - torch.logsumexp(unormalized_log_v, dim = -1, keepdim= True)
 
     def sample_latent(self,x):
@@ -51,12 +48,18 @@ class EMDensityEstimator(nn.Module):
         pick = Categorical(torch.exp(self.compute_log_v(x))).sample()
         return torch.stack([z[i,pick[i],:] for i in range(x.shape[0])])
 
+    def sample_reference(self, num_samples):
+        return torch.randn([num_samples, self.p])
+
+    def reference_log_density(self, z):
+        return -torch.sum(torch.square(z)/2, dim = -1) - torch.log(torch.tensor([2*torch.pi], device = z.device))*self.p/2
+
     def log_density(self, x):
         z = self.forward(x)
-        return torch.logsumexp(self.reference.log_prob(z) + self.log_pi.unsqueeze(0).repeat(x.shape[0],1) + self.log_det_J(x),dim=-1)
+        return torch.logsumexp(self.reference_log_density(z) + self.log_pi.unsqueeze(0).repeat(x.shape[0],1) + self.log_det_J(x),dim=-1)
 
     def sample_model(self, num_samples):
-        z = self.reference.sample([num_samples])
+        z = self.sample_reference(num_samples)
         x = self.backward(z)
         pick = Categorical(torch.exp(self.log_pi.unsqueeze(0).repeat(x.shape[0],1))).sample()
         return torch.stack([x[i,pick[i],:] for i in range(z.shape[0])])
@@ -117,9 +120,9 @@ class EMDensityEstimator(nn.Module):
             tt = torch.linspace(torch.min(self.target_samples), torch.max(self.target_samples), linspace).unsqueeze(1)
             model_density = torch.exp(self.log_density(tt))
             model_samples = self.sample_model(num_samples)
-            reference_samples = self.reference.sample([num_samples])
+            reference_samples = self.sample_reference(num_samples)
             tt_r = torch.linspace(torch.min(reference_samples), torch.max(reference_samples), linspace).unsqueeze(1)
-            reference_density = torch.exp(self.reference.log_prob(tt_r))
+            reference_density = torch.exp(self.reference_log_density(tt_r))
             proxy_samples = self.sample_latent(self.target_samples[:num_samples])
             fig = plt.figure(figsize=(28, 16))
             ax1 = fig.add_subplot(221)
@@ -142,17 +145,13 @@ class EMDensityEstimator(nn.Module):
             ax4.plot(tt_r.cpu(), reference_density.cpu(), color='green', label='reference density')
             sns.histplot(reference_samples[:, 0].cpu(), stat='density', alpha=0.5, bins=125, color='green',
                          label='Reference samples')
-            if hasattr(self.reference, 'r'):
-                ax4.text(0.01, 0.99, 'r = ' +str(round(self.reference.r.item(), 4)),
-                        verticalalignment='top', horizontalalignment='left',
-                        transform=ax2.transAxes, fontsize = 12)
             ax4.legend()
 
         elif self.p > 1 and self.p<=5:
             with torch.no_grad():
                 target_samples = self.target_samples[:num_samples]
                 model_samples = self.sample_model(num_samples)
-                reference_samples = self.reference.sample([num_samples])
+                reference_samples = self.sample_reference(num_samples)
                 proxy_samples = self.sample_latent(target_samples)
             df_target = pd.DataFrame(target_samples.cpu().numpy())
             df_target['label']= 'Data'
@@ -173,21 +172,13 @@ class EMDensityEstimator(nn.Module):
             g = sns.PairGrid(df_z, hue="label", height=12 / self.p, palette= {'Reference' : 'green', 'Proxy' : 'orange'})
             g.map_lower(sns.scatterplot, alpha=.5)
             g.map_diag(sns.histplot, bins = 60, alpha = .4, stat = 'density')
-            if hasattr(self.reference, 'r'):
-                def write_power_factor(*args, **kwargs):
-                    ax = plt.gca()
-                    id_dim = ax.get_subplotspec().rowspan.start
-                    _pf = self.reference.r[id_dim]
-                    label = f"r={_pf:.2f}"
-                    ax.annotate(label, xy=(0.1, 0.95), size=8, xycoords=ax.transAxes)
-                g.map_diag(write_power_factor)
 
         else:
             dim_dsplayed = 5
             perm = torch.randperm(self.p)
             target_samples = self.target_samples[:num_samples]
             model_samples = self.sample_model(num_samples)
-            reference_samples = self.reference.sample([num_samples])
+            reference_samples = self.sample_reference(num_samples)
             proxy_samples = self.sample_latent(target_samples)
             df_target = pd.DataFrame(target_samples[:,perm][:,:dim_dsplayed].cpu().numpy())
             df_target['label']= 'Data'
@@ -212,13 +203,5 @@ class EMDensityEstimator(nn.Module):
             #g.map_lower(sns.kdeplot, levels =4)
             g.map_lower(sns.scatterplot, alpha=.5)
             g.map_diag(sns.histplot, bins = 60, alpha = .4, stat = 'density')
-            if hasattr(self.reference, 'r'):
-                def write_power_factor(*args, **kwargs):
-                    ax = plt.gca()
-                    id_dim = ax.get_subplotspec().rowspan.start
-                    _pf = self.reference.r[id_dim]
-                    label = f"r={_pf:.2f}"
-                    ax.annotate(label, xy=(0.1, 0.95), size=8, xycoords=ax.transAxes)
-                g.map_diag(write_power_factor)
 
 
