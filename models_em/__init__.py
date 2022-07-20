@@ -1,1 +1,2 @@
 from .em_density_estimator import EMDensityEstimator
+from .full_rank_em_density_estimator import FullRankEMDensityEstimator
