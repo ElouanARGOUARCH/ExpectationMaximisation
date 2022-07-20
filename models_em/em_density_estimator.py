@@ -11,7 +11,8 @@ class EMDensityEstimator(nn.Module):
         self.K = K
         self.log_pi = torch.log(torch.ones([self.K])/self.K)
         self.m = self.target_samples[torch.randint(low= 0, high = self.target_samples.shape[0],size = [self.K])]
-        self.log_s = torch.zeros(self.K,self.p)
+        #self.log_s = torch.zeros(self.K,self.p)
+        self.log_s = torch.log(torch.var(self.target_samples, dim = 0)).unsqueeze(0).repeat(self.K, 1)/2
 
         self.loss_values = []
 
